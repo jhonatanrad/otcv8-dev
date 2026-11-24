@@ -7,5 +7,5 @@ function g_app.onRun()
     assert(not g_game.isOnline(), "Smoke test must remain offline")
     g_logger.info("[HEADLESS] SMOKE_OK: Lua and event loop without graphics")
     g_app.exit()
-  end, 200)
+  end, tonumber(os.getenv("OTC_HEADLESS_SMOKE_MS")) or 200)
 end

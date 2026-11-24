@@ -155,6 +155,56 @@ jobs:
           $log = Get-Content otclient-headless.log -Raw
           Write-Host $log
           if ($log -notmatch "Window, graphics, mouse and sound initialization skipped" -or $log -notmatch "No local configuration" -or $log -match "OpenGL [0-9]|FATAL ERROR") { throw "Default startup did not remain headless" }
+      - name: Manager syntax and offline self-test
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          $null = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path manager-headless.ps1),[ref]$tokens,[ref]$errors)
+          if ($errors.Count) { throw ($errors | Out-String) }
+          powershell.exe -NoProfile -File manager-headless.ps1 -SelfTest
+          if ($LASTEXITCODE -ne 0) { throw "Manager self-test failed" }
+      - name: Multi-process offline resource test
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          New-Item -ItemType Directory -Force profiles | Out-Null
+          $processes = @()
+          $ids = @()
+          try {
+            1..4 | ForEach-Object {
+              $id = [guid]::NewGuid().ToString('N')
+              $ids += $id
+              $psi = New-Object Diagnostics.ProcessStartInfo
+              $psi.FileName = (Resolve-Path otclient_headless.exe).Path
+              $psi.WorkingDirectory = (Get-Location).Path
+              $psi.Arguments = "--headless-smoke"
+              $psi.UseShellExecute = $false
+              $psi.CreateNoWindow = $true
+              $psi.EnvironmentVariables["OTC_HEADLESS_PROFILE"] = $id
+              $psi.EnvironmentVariables["OTC_HEADLESS_SMOKE_MS"] = "8000"
+              $processes += [Diagnostics.Process]::Start($psi)
+            }
+            Start-Sleep -Seconds 2
+            $initialCpu = @($processes | ForEach-Object { $_.Refresh(); $_.TotalProcessorTime.TotalSeconds })
+            $watch = [Diagnostics.Stopwatch]::StartNew()
+            Start-Sleep -Seconds 2
+            $rows = for ($i=0; $i -lt $processes.Count; $i++) {
+              $p = $processes[$i]; $p.Refresh()
+              if ($p.HasExited) { throw "Process exited before sample" }
+              [pscustomobject]@{ PID=$p.Id; RAM_MB=[math]::Round($p.WorkingSet64/1MB,2); CPU_percent_one_core=[math]::Round(100*($p.TotalProcessorTime.TotalSeconds-$initialCpu[$i])/$watch.Elapsed.TotalSeconds,2); Session=$p.SessionId; WindowHandle=$p.MainWindowHandle.ToInt64() }
+              if ($p.MainWindowHandle.ToInt64() -ne 0) { throw "Unexpected window" }
+            }
+            $rows | ConvertTo-Json | Set-Content headless-resource-report.json
+            $rows | Format-Table
+            foreach($p in $processes) {
+              if (!$p.WaitForExit(20000)) { throw "Smoke process timeout" }
+              if ($p.ExitCode -ne 0) { throw "Smoke process failed" }
+            }
+            foreach($id in $ids) {
+              if (!(Select-String -Path "profiles/$id.log" -Pattern "SMOKE_OK" -Quiet)) { throw "Missing isolated smoke result" }
+            }
+          } finally { foreach($p in $processes){if(!$p.HasExited){$p.Kill()}} }
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -162,13 +212,15 @@ jobs:
           name: headless-logs
           path: |
             *.log
+            headless-resource-report.json
+            profiles/*.log
             ${{ runner.temp }}/vcpkg-otcv8/buildtrees/*/*.log
           if-no-files-found: ignore
       - name: Package prototype
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force headless-dist | Out-Null
-          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,configure-headless.ps1,configure-headless.cmd,HEADLESS.md,LICENSE headless-dist
+          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,configure-headless.ps1,configure-headless.cmd,manager-headless.ps1,manager-headless.cmd,start-saved-headless.cmd,HEADLESS.md,LICENSE headless-dist
           Copy-Item modules headless-dist/modules -Recurse
           New-Item -ItemType Directory -Force headless-dist/data/things/860 | Out-Null
           Set-Content headless-dist/data/things/860/COLOQUE-TIBIA-DAT-AQUI.txt "Copy the matching Tibia.dat into this directory."

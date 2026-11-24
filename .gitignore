@@ -129,3 +129,5 @@ _ReSharper*/
 
 # Local headless credentials and private settings
 /headless-local.lua
+
+/profiles/
