@@ -77,7 +77,7 @@ int main(int argc, const char* argv[]) {
     g_http.init();
 
     bool testMode = std::find(args.begin(), args.end(), "--test") != args.end();
-    if (testMode) {
+    if (testMode || smoke) {
         g_logger.setTestingMode();    
     }
 
