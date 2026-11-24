@@ -31,6 +31,15 @@
 
 int main(int argc, const char* argv[]) {
     std::vector<std::string> args(argv, argv + argc);
+    const bool smoke = std::find(args.begin(), args.end(), "--headless-smoke") != args.end();
+    const bool headless = smoke || std::find(args.begin(), args.end(), "--headless") != args.end();
+#if defined(FREE_VERSION) || defined(FREE_VERSION_LIB)
+    if (headless) {
+        std::cerr << "Headless mode is not supported in this build" << std::endl;
+        return 2;
+    }
+#endif
+    g_app.setHeadless(headless);
 
 #ifdef CRASH_HANDLER
     installCrashHandler();
@@ -42,7 +51,7 @@ int main(int argc, const char* argv[]) {
     g_logger.setLogFile(compactName + ".log");
 
     // setup application name and version
-    g_app.setName("OTClientV8");
+    g_app.setName(headless ? "OTClientV8Headless" : "OTClientV8");
     g_app.setCompactName(compactName);
     g_app.setVersion("3.2");
 
@@ -58,7 +67,7 @@ int main(int argc, const char* argv[]) {
     }
 #endif
 
-    if (g_resources.launchCorrect(g_app.getName(), g_app.getCompactName())) {
+    if (!headless && g_resources.launchCorrect(g_app.getName(), g_app.getCompactName())) {
         return 0; // started other executable
     }
 
@@ -76,7 +85,10 @@ int main(int argc, const char* argv[]) {
     g_resources.setupWriteDir(g_app.getName(), g_app.getCompactName());
     g_resources.setup();
 
-    if (!g_lua.safeRunScript("init.lua")) {
+    if (headless) {
+        if (!g_lua.safeRunScript(smoke ? "headless-smoke.lua" : "headless.lua"))
+            g_logger.fatal("Unable to initialize headless Lua script");
+    } else if (!g_lua.safeRunScript("init.lua")) {
         if (g_resources.isLoadedFromArchive() && !g_resources.isLoadedFromMemory() &&
             g_resources.loadDataFromSelf(true)) {
             g_logger.error("Unable to run script init.lua! Trying to run version from memory.");
@@ -89,7 +101,7 @@ int main(int argc, const char* argv[]) {
         }
     }
 
-    if (testMode) {
+    if (testMode && !headless) {
         if (!g_lua.safeRunScript("test.lua")) {
             g_logger.fatal("Can't run test.lua");
         }
@@ -98,7 +110,8 @@ int main(int argc, const char* argv[]) {
 #ifdef WIN32
     // support for progdn proxy system, if you don't have this dll nothing will happen
     // however, it is highly recommended to use otcv8 proxy system
-    LoadLibraryA("progdn32.dll");
+    if (!headless)
+        LoadLibraryA("progdn32.dll");
 #endif
 
     // the run application main loop
