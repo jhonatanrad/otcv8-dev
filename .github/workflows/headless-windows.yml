@@ -24,6 +24,18 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$root\bootstrap-vcpkg.bat" -disableMetrics
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The historical 7-Zip URL has been removed. Seed the original archive
+          # from the upstream project's SourceForge mirror with integrity checking.
+          $downloads = Join-Path $root "downloads"
+          New-Item -ItemType Directory -Force $downloads | Out-Null
+          $archive = Join-Path $downloads "7z2107-extra.7z"
+          $url = "https://downloads.sourceforge.net/project/sevenzip/7-Zip/21.07/7z2107-extra.7z"
+          curl.exe --fail --location --retry 3 --output $archive $url
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $expected = "362411800adf3af0170c1cd443120f072774b784f21ecf9edb5843645c53c94b"
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+            throw "7-Zip archive integrity check failed"
+          }
           $ports = @("boost-iostreams","boost-asio","boost-beast","boost-system","boost-variant","boost-lockfree","boost-process","boost-program-options","boost-uuid","boost-filesystem","luajit","glew","physfs","openal-soft","libogg","libvorbis","zlib","libzip","bzip2","openssl","liblzma")
           & "$root\vcpkg.exe" install --triplet x86-windows-static @ports
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
