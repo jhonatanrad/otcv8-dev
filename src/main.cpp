@@ -32,7 +32,7 @@
 int main(int argc, const char* argv[]) {
     std::vector<std::string> args(argv, argv + argc);
     const bool smoke = std::find(args.begin(), args.end(), "--headless-smoke") != args.end();
-    const bool headless = smoke || std::find(args.begin(), args.end(), "--headless") != args.end();
+    const bool headless = true; // This branch builds the dedicated headless client.
 #if defined(FREE_VERSION) || defined(FREE_VERSION_LIB)
     if (headless) {
         std::cerr << "Headless mode is not supported in this build" << std::endl;
@@ -48,7 +48,7 @@ int main(int argc, const char* argv[]) {
     // initialize resources
     g_resources.init(argv[0]);
     std::string compactName = g_resources.getCompactName();
-    g_logger.setLogFile(compactName + ".log");
+    g_logger.setLogFile("otclient-headless.log");
 
     // setup application name and version
     g_app.setName(headless ? "OTClientV8Headless" : "OTClientV8");

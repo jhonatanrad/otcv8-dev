@@ -143,10 +143,18 @@ jobs:
         timeout-minutes: 2
         shell: pwsh
         run: |
+          Remove-Item otclient-headless.log -ErrorAction SilentlyContinue
           $p = Start-Process .\otclient_headless.exe -ArgumentList "--headless-smoke" -PassThru -Wait
-          Get-ChildItem *.log | ForEach-Object { Get-Content $_.FullName -Tail 100 }
           if ($p.ExitCode -ne 0) { throw "Smoke test exit code: $($p.ExitCode)" }
-          if (-not (Get-ChildItem *.log | Select-String "SMOKE_OK")) { throw "Missing smoke test confirmation" }
+          $log = Get-Content otclient-headless.log -Raw
+          Write-Host $log
+          if ($log -notmatch "SMOKE_OK" -or $log -match "GPU NVIDIA|OpenGL [0-9]|FATAL ERROR") { throw "Smoke test failed" }
+          Remove-Item otclient-headless.log
+          $p = Start-Process .\otclient_headless.exe -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Default startup failed: $($p.ExitCode)" }
+          $log = Get-Content otclient-headless.log -Raw
+          Write-Host $log
+          if ($log -notmatch "Window, graphics, mouse and sound initialization skipped" -or $log -notmatch "No local configuration" -or $log -match "OpenGL [0-9]|FATAL ERROR") { throw "Default startup did not remain headless" }
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -160,9 +168,10 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force headless-dist | Out-Null
-          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,HEADLESS.md,LICENSE headless-dist
+          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,configure-headless.ps1,configure-headless.cmd,HEADLESS.md,LICENSE headless-dist
           Copy-Item modules headless-dist/modules -Recurse
           New-Item -ItemType Directory -Force headless-dist/data/things/860 | Out-Null
+          Set-Content headless-dist/data/things/860/COLOQUE-TIBIA-DAT-AQUI.txt "Copy the matching Tibia.dat into this directory."
       - name: Upload Windows prototype
         uses: actions/upload-artifact@v4
         with:

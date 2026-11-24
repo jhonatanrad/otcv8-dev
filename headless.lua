@@ -30,8 +30,10 @@ local function loadAssets()
   if config.extended then g_game.enableFeature(GameSpritesU32) end
   if config.frameGroups then g_game.enableFeature(GameIdleAnimations) end
   if config.frameDurations then g_game.enableFeature(GameEnhancedAnimations) end
+  assert(g_resources.fileExists(config.dat or "/data/things/860/Tibia.dat"), "Tibia.dat not found in data/things/860")
   assert(g_things.loadDat(config.dat or "/data/things/860/Tibia.dat"),
     "Unable to load DAT; check file and format flags")
+  log("DAT loaded successfully")
   if config.minimap and config.minimap ~= "" then
     g_minimap.loadOtmm(config.minimap)
   end
@@ -63,6 +65,10 @@ local function tick()
     lastLoggedPosition = key
   end
 
+  if not config.enableRoute then
+    schedule(tick, 500)
+    return
+  end
   local target = config.target
   local cart = config.usePosition
   local now = g_clock.millis()
@@ -108,6 +114,7 @@ end
 
 local function onStart()
   log("Game started; waiting for confirmed local-player position")
+  if not config.enableRoute then log("Login-only test: automatic movement disabled") end
   running = true
   finished = false
   index = 1
@@ -120,7 +127,7 @@ local function onEnd()
   log("Disconnected.")
 end
 
-function g_app.onRun()
+local function begin()
   log("Running without window or graphical initialization.")
   if not g_resources.fileExists(configPath) then
     log("No local configuration. Copy headless-local.example.lua to headless-local.lua; no login attempted.")
@@ -132,9 +139,12 @@ function g_app.onRun()
   assert(type(config.host) == "string" and config.host ~= "", "World host required")
   assert(type(config.port) == "number" and config.port >= 1 and config.port <= 65535, "World port required")
   assert(type(config.account) == "string" and config.account ~= "", "Account required")
+  config.password = os.getenv("OTC_HEADLESS_PASSWORD") or config.password
   assert(type(config.password) == "string" and config.password ~= "", "Password required")
   assert(type(config.character) == "string" and config.character ~= "", "Character required")
-  assert(type(config.target) == "table" and config.target.z, "Target position required")
+  if config.enableRoute then
+    assert(type(config.target) == "table" and config.target.z, "Target position required")
+  end
   -- Reuse the standard OTC feature selection with a DAT-only asset adapter.
   modules = { game_things = { load = loadAssets } }
   dofile("/modules/game_features/features.lua")
@@ -151,8 +161,18 @@ function g_app.onRun()
     onTextMessage = function(mode, message) log("Server: " .. tostring(message)) end
   })
   -- Direct world endpoint, not a login/character-list endpoint.
+  log("Connecting to configured world endpoint " .. config.host .. ":" .. config.port)
   g_game.loginWorld(config.account, config.password, config.world or "OTServer",
     config.host, config.port, config.character, "", "", "")
+  config.password = nil
+end
+
+function g_app.onRun()
+  local ok, err = pcall(begin)
+  if not ok then
+    g_logger.error("[HEADLESS] Startup failed: " .. tostring(err))
+    g_app.exit()
+  end
 end
 
 function g_app.onTerminate()

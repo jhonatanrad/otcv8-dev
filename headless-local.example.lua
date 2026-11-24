@@ -5,6 +5,7 @@ return {
   port = 7172,
   world = "OTServer",
   account = "",
+  -- Prefer the launcher, which passes the password through the process environment.
   password = "",
   character = "",
   dat = "/data/things/860/Tibia.dat",
@@ -15,6 +16,7 @@ return {
   -- Optional OTC minimap file (OTMM, not the old .map format).
   minimap = "",
   -- Supply confirmed same-floor approach points if starting upstairs.
+  enableRoute = false, -- first test: login only
   approach = {},
   target = {x = 160, y = 48, z = 8},
   usePosition = {x = 160, y = 47, z = 8},
