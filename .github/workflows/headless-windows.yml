@@ -5,6 +5,9 @@ on:
     branches: [headless-v1]
 permissions:
   contents: read
+concurrency:
+  group: headless-windows-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   windows:
     runs-on: windows-2022
@@ -96,6 +99,13 @@ jobs:
             $body = [regex]::Replace($body, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{
               param($m) $m.Groups[1].Value + "OPTIONS" + [Environment]::NewLine + "        -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             })
+            if ($port -eq "openal-soft") {
+              # The old helper maps v142 to the missing VS2019 IDE even when
+              # the v142 compiler is installed inside VS2022. Ninja uses the
+              # compiler environment already selected by vcpkg.
+              if (-not $body.Contains("vcpkg_configure_cmake(")) { throw "OpenAL configure call missing" }
+              $body = $body.Replace("vcpkg_configure_cmake(", "vcpkg_configure_cmake(" + [Environment]::NewLine + "    PREFER_NINJA")
+            }
             Set-Content $portfile $body -Encoding utf8NoBOM
           }
           cmake --version
@@ -126,7 +136,7 @@ jobs:
       - name: Compile Windows prototype
         shell: pwsh
         run: |
-          MSBuild.exe vc16/otclient.vcxproj /m /p:Configuration=OpenGL /p:Platform=Win32 /p:PlatformToolset=v143 /p:BUILD_REVISION=${{ github.run_number }}
+          MSBuild.exe vc16/otclient.vcxproj /m /p:Configuration=OpenGL /p:Platform=Win32 /p:PlatformToolset=v143 /p:VcpkgRoot="$env:RUNNER_TEMP\vcpkg-otcv8\" /p:VcpkgTriplet=x86-windows-static /p:BUILD_REVISION=${{ github.run_number }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item otclient_gl.exe otclient_headless.exe
       - name: Offline no-render smoke test
