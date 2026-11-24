@@ -21,6 +21,13 @@ jobs:
           msystem: UCRT64
           update: true
           install: mingw-w64-ucrt-x86_64-pkgconf
+      - name: Restore compiled dependency cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/otcv8-binary-cache
+          key: otcv8-vcpkg-2022-x86-v143-${{ github.run_id }}
+          restore-keys: |
+            otcv8-vcpkg-2022-x86-v143-
       - name: Install pinned upstream dependencies
         shell: pwsh
         env:
@@ -31,6 +38,9 @@ jobs:
           if (-not (Test-Path $env:PKG_CONFIG)) { throw "Maintained pkgconf executable not found" }
           & $env:PKG_CONFIG --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $cache = Join-Path $env:RUNNER_TEMP "otcv8-binary-cache"
+          New-Item -ItemType Directory -Force $cache | Out-Null
+          $env:VCPKG_BINARY_SOURCES = "clear;files,$cache,readwrite"
           $root = Join-Path $env:RUNNER_TEMP "vcpkg-otcv8"
           git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $root
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -50,11 +60,45 @@ jobs:
           if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
             throw "7-Zip archive integrity check failed"
           }
+          # LuaJIT removed its historical GitHub release tag. Use the original
+          # 2.0.5 release archive, with the independently recorded SHA512.
+          $luaPort = Join-Path $root "ports/luajit/portfile.cmake"
+          $lua = Get-Content $luaPort -Raw
+          $oldBlock = '(?s)^vcpkg_from_github\(.*?\r?\n\)'
+          if (-not [regex]::IsMatch($lua, $oldBlock)) { throw "Unexpected LuaJIT port format" }
+          $newBlock = @'
+          vcpkg_download_distfile(ARCHIVE
+              URLS "https://fra.de.distfiles.macports.org/luajit/LuaJIT-2.0.5.tar.gz"
+                   "https://macports.distfiles.ionic.de/luajit/LuaJIT-2.0.5.tar.gz"
+              FILENAME "LuaJIT-2.0.5.tar.gz"
+              SHA512 2636675602b4a060b0571c05220db2061dd2f38568e35b2be346a0f5e3128d87057d11d3d0d7567d8cc4e0817b5e4cf2c52a17a48065520962b157816465a9fe
+          )
+          vcpkg_extract_source_archive_ex(
+              OUT_SOURCE_PATH SOURCE_PATH
+              ARCHIVE ${ARCHIVE}
+              REF 2.0.5
+              PATCHES 001-fix-build-path.patch 002-fix-crt-linkage.patch
+          )
+          '@
+          $lua = [regex]::Replace($lua, $oldBlock, [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $newBlock })
+          $lua = $lua.Replace("vcpkg_execute_required_process_repeat(d8un", "vcpkg_execute_required_process_repeat(")
+          Set-Content $luaPort $lua -Encoding utf8NoBOM
+          # Keep the pinned OpenSSL ABI but add the official archive host.
+          $sslPort = Join-Path $root "ports/openssl/portfile.cmake"
+          $ssl = Get-Content $sslPort -Raw
+          $ssl = $ssl.Replace('URLS "https://www.openssl.org/source/', 'URLS "https://mirror.openssl-library.org/source/old/1.1.1/openssl-${OPENSSL_VERSION}.tar.gz" "https://www.openssl.org/source/')
+          Set-Content $sslPort $ssl -Encoding utf8NoBOM
           $ports = @("boost-iostreams","boost-asio","boost-beast","boost-system","boost-variant","boost-lockfree","boost-process","boost-program-options","boost-uuid","boost-filesystem","luajit","glew","physfs","openal-soft","libogg","libvorbis","zlib","libzip","bzip2","openssl","liblzma")
           & "$root\vcpkg.exe" install --triplet x86-windows-static @ports
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & "$root\vcpkg.exe" integrate install
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save dependency cache even if installation failed
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/otcv8-binary-cache
+          key: otcv8-vcpkg-2022-x86-v143-${{ github.run_id }}
       - name: Compile Windows prototype
         shell: pwsh
         run: |
