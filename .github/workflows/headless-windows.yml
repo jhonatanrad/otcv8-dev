@@ -87,13 +87,19 @@ jobs:
           $ssl = Get-Content $sslPort -Raw
           $ssl = $ssl.Replace('URLS "https://www.openssl.org/source/', 'URLS "https://mirror.openssl-library.org/source/old/1.1.1/openssl-${OPENSSL_VERSION}.tar.gz" "https://www.openssl.org/source/')
           Set-Content $sslPort $ssl -Encoding utf8NoBOM
-          # CMake 4 rejects the old policy baseline in OpenAL/PhysFS.
-          # Keep the known upstream versions and set the compatibility floor
-          # explicitly for these legacy CMake projects.
+          # Legacy CMake projects need an explicit policy compatibility floor.
           foreach ($port in @("openal-soft", "physfs")) {
             $portfile = Join-Path $root "ports/$port/portfile.cmake"
             $body = Get-Content $portfile -Raw
-            $pattern = '(?m)^(\s*)OPTIONS\s*\r?"boost-iostreams","boost-asio","boost-beast","boost-system","boost-variant","boost-lockfree","boost-process","boost-program-options","boost-uuid","boost-filesystem","luajit","glew","physfs","openal-soft","libogg","libvorbis","zlib","libzip","bzip2","openssl","liblzma")
+            $pattern = '(?m)^([ \t]*)OPTIONS[ \t]*\r?$'
+            if (-not [regex]::IsMatch($body, $pattern)) { throw "Missing CMake OPTIONS in $port" }
+            $body = [regex]::Replace($body, $pattern, [System.Text.RegularExpressions.MatchEvaluator]{
+              param($m) $m.Groups[1].Value + "OPTIONS" + [Environment]::NewLine + "        -DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+            })
+            Set-Content $portfile $body -Encoding utf8NoBOM
+          }
+          cmake --version
+          $ports = @("boost-iostreams","boost-asio","boost-beast","boost-system","boost-variant","boost-lockfree","boost-process","boost-program-options","boost-uuid","boost-filesystem","luajit","glew","physfs","openal-soft","libogg","libvorbis","zlib","libzip","bzip2","openssl","liblzma")
           & "$root\vcpkg.exe" install --triplet x86-windows-static @ports
           $installExit = $LASTEXITCODE
           if ($installExit -ne 0) {
@@ -139,57 +145,6 @@ jobs:
           path: |
             *.log
             ${{ runner.temp }}/vcpkg-otcv8/buildtrees/*/*.log
-          if-no-files-found: ignore
-      - name: Package prototype
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force headless-dist | Out-Null
-          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,HEADLESS.md,LICENSE headless-dist
-          Copy-Item modules headless-dist/modules -Recurse
-          New-Item -ItemType Directory -Force headless-dist/data/things/860 | Out-Null
-      - name: Upload Windows prototype
-        uses: actions/upload-artifact@v4
-        with:
-          name: OTCv8-Headless-Windows
-          path: headless-dist/
-          if-no-files-found: error
-
-            if (-not [regex]::IsMatch($body, $pattern)) { throw "Missing CMake OPTIONS in $port" }
-            $body = [regex]::Replace($body, $pattern, '$1OPTIONS' + "`n        -DCMAKE_POLICY_VERSION_MINIMUM=3.5")
-            Set-Content $portfile $body -Encoding utf8NoBOM
-          }
-          cmake --version
-          $ports = @("boost-iostreams","boost-asio","boost-beast","boost-system","boost-variant","boost-lockfree","boost-process","boost-program-options","boost-uuid","boost-filesystem","luajit","glew","physfs","openal-soft","libogg","libvorbis","zlib","libzip","bzip2","openssl","liblzma")
-          & "$root\vcpkg.exe" install --triplet x86-windows-static @ports
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$root\vcpkg.exe" integrate install
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Save dependency cache even if installation failed
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ runner.temp }}/otcv8-binary-cache
-          key: otcv8-vcpkg-2022-x86-v143-${{ github.run_id }}
-      - name: Compile Windows prototype
-        shell: pwsh
-        run: |
-          MSBuild.exe vc16/otclient.vcxproj /m /p:Configuration=OpenGL /p:Platform=Win32 /p:PlatformToolset=v143 /p:BUILD_REVISION=${{ github.run_number }}
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item otclient_gl.exe otclient_headless.exe
-      - name: Offline no-render smoke test
-        timeout-minutes: 2
-        shell: pwsh
-        run: |
-          $p = Start-Process .\otclient_headless.exe -ArgumentList "--headless-smoke" -PassThru -Wait
-          Get-ChildItem *.log | ForEach-Object { Get-Content $_.FullName -Tail 100 }
-          if ($p.ExitCode -ne 0) { throw "Smoke test exit code: $($p.ExitCode)" }
-          if (-not (Get-ChildItem *.log | Select-String "SMOKE_OK")) { throw "Missing smoke test confirmation" }
-      - name: Upload diagnostic logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: headless-logs
-          path: "*.log"
           if-no-files-found: ignore
       - name: Package prototype
         shell: pwsh
