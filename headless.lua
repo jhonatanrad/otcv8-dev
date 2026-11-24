@@ -11,7 +11,6 @@ dofile("/modules/gamelib/game.lua")
 local configPath = "/headless-local.lua"
 local config = nil
 local scheduled = nil
-local lastPosition = nil
 local lastAttempt = 0
 local lastUse = 0
 local lastLoggedPosition = ""
@@ -54,7 +53,7 @@ end
 local function tick()
   if not running or finished or not g_game.isOnline() then return end
   local player = g_game.getLocalPlayer()
-  if not player or player:isDead() then return end
+  if not player or player:isDead() then schedule(tick, 250); return end
   local pos = player:getPosition()
   if not pos or pos.x == 65535 or pos.z > 15 then schedule(tick, 250); return end
 
@@ -104,7 +103,6 @@ local function tick()
     -- Use OTC's existing asynchronous pathfinder; no UI or render loop.
     player:autoWalk(current, false)
   end
-  lastPosition = pos
   schedule(tick, 250)
 end
 
