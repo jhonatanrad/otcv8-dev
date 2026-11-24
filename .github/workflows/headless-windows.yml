@@ -1,0 +1,65 @@
+name: Build Headless Windows
+on:
+  workflow_dispatch:
+  push:
+    branches: [headless-v1]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: microsoft/setup-msbuild@v2
+      - name: Install pinned upstream dependencies
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "vcpkg-otcv8"
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git $root
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C $root checkout 3b3bd424827a1f7f4813216f6b32b6c61e386b2e
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$root\bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $ports = @("boost-iostreams","boost-asio","boost-beast","boost-system","boost-variant","boost-lockfree","boost-process","boost-program-options","boost-uuid","boost-filesystem","luajit","glew","physfs","openal-soft","libogg","libvorbis","zlib","libzip","bzip2","openssl","liblzma")
+          & "$root\vcpkg.exe" install --triplet x86-windows-static @ports
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$root\vcpkg.exe" integrate install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compile Windows prototype
+        shell: pwsh
+        run: |
+          MSBuild.exe vc16/otclient.vcxproj /m /p:Configuration=OpenGL /p:Platform=Win32 /p:PlatformToolset=v143 /p:BUILD_REVISION=${{ github.run_number }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item otclient_gl.exe otclient_headless.exe
+      - name: Offline no-render smoke test
+        timeout-minutes: 2
+        shell: pwsh
+        run: |
+          $p = Start-Process .\otclient_headless.exe -ArgumentList "--headless-smoke" -PassThru -Wait
+          Get-ChildItem *.log | ForEach-Object { Get-Content $_.FullName -Tail 100 }
+          if ($p.ExitCode -ne 0) { throw "Smoke test exit code: $($p.ExitCode)" }
+          if (-not (Get-ChildItem *.log | Select-String "SMOKE_OK")) { throw "Missing smoke test confirmation" }
+      - name: Upload diagnostic logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-logs
+          path: "*.log"
+          if-no-files-found: ignore
+      - name: Package prototype
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force headless-dist | Out-Null
+          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,HEADLESS.md,LICENSE headless-dist
+          Copy-Item modules headless-dist/modules -Recurse
+          New-Item -ItemType Directory -Force headless-dist/data/things/860 | Out-Null
+      - name: Upload Windows prototype
+        uses: actions/upload-artifact@v4
+        with:
+          name: OTCv8-Headless-Windows
+          path: headless-dist/
+          if-no-files-found: error
