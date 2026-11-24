@@ -205,6 +205,28 @@ jobs:
               if (!(Select-String -Path "profiles/$id.log" -Pattern "SMOKE_OK" -Quiet)) { throw "Missing isolated smoke result" }
             }
           } finally { foreach($p in $processes){if(!$p.HasExited){$p.Kill()}} }
+      - name: SOCKS5 loopback integration test
+        shell: pwsh
+        run: |
+          python tests/headless_proxy_test.py
+          if ($LASTEXITCODE -ne 0) { throw "SOCKS5 integration test failed" }
+      - name: Windows Session 0 offline test
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          $name = "OTCv8HeadlessCI-$env:GITHUB_RUN_ID"
+          $script = (Resolve-Path tests/headless_session0.ps1).Path
+          Remove-Item otclient-headless.log,session0-result.txt -ErrorAction SilentlyContinue
+          $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -NonInteractive -File "' + $script + '"') -WorkingDirectory (Get-Location).Path
+          try {
+            Register-ScheduledTask -TaskName $name -Action $action -User SYSTEM -RunLevel Highest -Force | Out-Null
+            Start-ScheduledTask -TaskName $name
+            for($i=0;$i -lt 30 -and !(Test-Path session0-result.txt);$i++){Start-Sleep -Seconds 1}
+            if (!(Test-Path session0-result.txt)) { throw "Session 0 result missing" }
+            $result=Get-Content session0-result.txt -Raw
+            Write-Host $result
+            if($result -notmatch "SESSION0_OK session=0"){throw "Session 0 test failed"}
+          } finally { Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue }
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -213,6 +235,7 @@ jobs:
           path: |
             *.log
             headless-resource-report.json
+            session0-result.txt
             profiles/*.log
             ${{ runner.temp }}/vcpkg-otcv8/buildtrees/*/*.log
           if-no-files-found: ignore
