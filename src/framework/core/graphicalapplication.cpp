@@ -51,6 +51,10 @@ GraphicalApplication g_app;
 void GraphicalApplication::init(std::vector<std::string>& args)
 {
     Application::init(args);
+    if (isHeadless()) {
+        g_logger.info("[HEADLESS] Window, graphics, mouse and sound initialization skipped");
+        return;
+    }
 
     // setup platform window
     g_window.init();
@@ -81,7 +85,8 @@ void GraphicalApplication::init(std::vector<std::string>& args)
 void GraphicalApplication::deinit()
 {
     // hide the window because there is no render anymore
-    g_window.hide();
+    if (!isHeadless())
+        g_window.hide();
     g_asyncDispatcher.terminate();
 
     Application::deinit();
@@ -89,6 +94,10 @@ void GraphicalApplication::deinit()
 
 void GraphicalApplication::terminate()
 {
+    if (isHeadless()) {
+        Application::terminate();
+        return;
+    }
     // destroy any remaining widget
     g_ui.terminate();
 
@@ -113,6 +122,20 @@ void GraphicalApplication::terminate()
 void GraphicalApplication::run()
 {
     m_running = true;
+    if (isHeadless()) {
+        g_dispatcherThreadId = std::this_thread::get_id();
+        g_clock.update();
+        g_lua.callGlobalField("g_app", "onRun");
+        while (!m_stopping) {
+            g_clock.update();
+            Application::poll();
+            m_processingFrames.addFrame();
+            ++m_iteration;
+            stdext::millisleep(5);
+        }
+        m_running = false;
+        return;
+    }
     m_windowPollTimer.restart();
 
     // first clock update
@@ -371,6 +394,10 @@ void GraphicalApplication::run()
 }
 
 void GraphicalApplication::poll() {
+    if (isHeadless()) {
+        Application::poll();
+        return;
+    }
     ticks_t start = stdext::millis();
 #ifdef FW_SOUND
     g_sounds.poll();
@@ -393,6 +420,10 @@ void GraphicalApplication::pollGraphics()
 
 void GraphicalApplication::close()
 {
+    if (isHeadless()) {
+        Application::close();
+        return;
+    }
     VALIDATE(std::this_thread::get_id() == g_dispatcherThreadId);
     m_onInputEvent = true;
     Application::close();
