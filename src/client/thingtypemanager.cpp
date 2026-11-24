@@ -180,6 +180,14 @@ bool ThingTypeManager::loadDat(std::string file)
 
         FileStreamPtr fin = g_resources.openFile(file, g_game.getFeature(Otc::GameDontCacheFiles));
 
+        if (g_app.isHeadless()) {
+            if (fin->size() < 12) stdext::throw_exception("DAT header shorter than 12 bytes");
+            std::string header;
+            for (uint i = 0; i < std::min<uint>(fin->size(), 64); ++i)
+                header += stdext::format("%02X ", static_cast<unsigned>(fin->getU8()));
+            g_logger.info(stdext::format("[DAT] bytes=%u header=%s", fin->size(), header));
+            fin->seek(0);
+        }
         m_datSignature = fin->getU32();
         m_contentRevision = static_cast<uint16_t>(m_datSignature);
 
@@ -194,10 +202,10 @@ bool ThingTypeManager::loadDat(std::string file)
             uint16 firstId = 1;
             if(category == ThingCategoryItem)
                 firstId = 100;
-            for(uint16 id = firstId; id < m_thingTypes[category].size(); ++id) {
+            for(size_t id = firstId; id < m_thingTypes[category].size(); ++id) {
                 ThingTypePtr type(new ThingType);
                 currentCategory = category; currentId = id; offset = fin->tell();
-                type->unserialize(id, (ThingCategory)category, fin);
+                type->unserialize(static_cast<uint16>(id), (ThingCategory)category, fin);
                 m_thingTypes[category][id] = type;
                 if (type->isMarketable()) {
                     auto marketData = type->getMarketData();
@@ -206,6 +214,8 @@ bool ThingTypeManager::loadDat(std::string file)
             }
         }
 
+        if (g_app.isHeadless() && fin->tell() != fin->size())
+            stdext::throw_exception(stdext::format("DAT parser ended at %u of %u bytes", fin->tell(), fin->size()));
         m_datLoaded = true;
         g_lua.callGlobalField("g_things", "onLoadDat", file);
         return true;

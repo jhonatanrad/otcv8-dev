@@ -227,6 +227,21 @@ jobs:
             Write-Host $result
             if($result -notmatch "SESSION0_OK session=0"){throw "Session 0 test failed"}
           } finally { Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue }
+      - name: DAT and CaveBot offline integration tests
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          # Standard synthetic DAT 8.60: one item, one creature.
+          python -c "import struct,pathlib; p=pathlib.Path('tests/fixture.dat'); p.write_bytes(struct.pack('<IHHHH',0x12345678,100,1,0,0)+bytes([0,100,0,255,1,1,1,1,1,1,1])+struct.pack('<I',1)+bytes([255,1,0,1,1,1,1,1,1,1])+struct.pack('<I',2))"
+          if ($LASTEXITCODE -ne 0) { throw "DAT fixture creation failed" }
+          Remove-Item otclient-headless.log -ErrorAction SilentlyContinue
+          $env:OTC_HEADLESS_DAT_TEST="1"
+          try {
+            $p=Start-Process .\otclient_headless.exe -ArgumentList "--headless-smoke" -Wait -PassThru
+            $log=Get-Content otclient-headless.log -Raw
+            Write-Host $log
+            if ($p.ExitCode -ne 0 -or $log -notmatch "DAT_SELFTEST_OK" -or $log -notmatch "CAVEBOT_SELFTEST_OK") { throw "DAT/CaveBot integration test failed" }
+          } finally { Remove-Item Env:OTC_HEADLESS_DAT_TEST -ErrorAction SilentlyContinue }
       - name: Upload diagnostic logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -243,7 +258,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force headless-dist | Out-Null
-          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,configure-headless.ps1,configure-headless.cmd,manager-headless.ps1,manager-headless.cmd,start-saved-headless.cmd,HEADLESS.md,LICENSE headless-dist
+          Copy-Item otclient_headless.exe,init.lua,headless.lua,headless-dat.lua,headless-cavebot.lua,headless-smoke.lua,headless-local.example.lua,start-headless.cmd,test-headless.cmd,configure-headless.ps1,configure-headless.cmd,manager-headless.ps1,manager-headless.cmd,start-saved-headless.cmd,HEADLESS.md,LICENSE headless-dist
           Copy-Item modules headless-dist/modules -Recurse
           New-Item -ItemType Directory -Force headless-dist/data/things/860 | Out-Null
           Set-Content headless-dist/data/things/860/COLOQUE-TIBIA-DAT-AQUI.txt "Copy the matching Tibia.dat into this directory."

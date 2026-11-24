@@ -4,6 +4,17 @@ local event
 local proxyTest = os.getenv("OTC_HEADLESS_PROXY_TEST") == "1"
 local protocol
 function g_app.onRun()
+  if os.getenv("OTC_HEADLESS_DAT_TEST")=="1" then
+    dofile("/modules/gamelib/const.lua")
+    dofile("/headless-dat.lua")
+    g_game.setClientVersion(860)
+    g_game.setProtocolVersion(860)
+    HeadlessDat.load("/tests/fixture.dat",{extended=true,frameGroups=true,frameDurations=false},function(s) g_logger.info(s) end)
+    dofile("/tests/headless_cavebot_test.lua")
+    g_logger.info("DAT_SELFTEST_OK")
+    g_app.exit()
+    return
+  end
   if proxyTest then
     protocol = Protocol.create()
     protocol.onConnect = function()
