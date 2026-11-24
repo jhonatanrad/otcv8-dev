@@ -28,6 +28,7 @@
 #include <framework/util/stats.h>
 #include <framework/util/extras.h>
 #include <chrono>
+#include <cstdlib>
 
 asio::io_service g_ioService;
 std::list<std::shared_ptr<asio::streambuf>> Connection::m_outputStreams;
@@ -97,7 +98,18 @@ void Connection::connect(const std::string& host, uint16 port, const std::functi
     m_error.clear();
     m_connectCallback = connectCallback;
 
-    asio::ip::tcp::resolver::query query(host, stdext::unsafe_cast<std::string>(port));
+    auto env = [](const char* name) { const char* value = std::getenv(name); return value ? std::string(value) : std::string(); };
+    m_socksHost = g_app.isHeadless() ? env("OTC_SOCKS_HOST") : "";
+    m_socksUser = env("OTC_SOCKS_USER");
+    m_socksPassword = env("OTC_SOCKS_PASSWORD");
+    m_destinationHost = host;
+    m_destinationPort = port;
+    const std::string proxyPort = env("OTC_SOCKS_PORT");
+    if (!m_socksHost.empty() && (proxyPort.empty() || m_socksUser.size() > 255 || m_socksPassword.size() > 255 || host.empty() || host.size() > 255)) {
+        handleError(asio::error::invalid_argument);
+        return;
+    }
+    asio::ip::tcp::resolver::query query(m_socksHost.empty() ? host : m_socksHost, m_socksHost.empty() ? stdext::unsafe_cast<std::string>(port) : proxyPort);
     m_resolver.async_resolve(query, std::bind(&Connection::onResolve, asConnection(), std::placeholders::_1, std::placeholders::_2));
 
     m_readTimer.cancel();
@@ -218,27 +230,83 @@ void Connection::onResolve(const boost::system::error_code& error, asio::ip::bas
 void Connection::onConnect(const boost::system::error_code& error)
 {
     m_readTimer.cancel();
-    m_activityTimer.restart();
-
-    if(error == asio::error::operation_aborted)
+    if(error == asio::error::operation_aborted) return;
+    if(error) { handleError(error); return; }
+    if(!m_socksHost.empty()) {
+        m_readTimer.expires_from_now(std::chrono::seconds(READ_TIMEOUT));
+        m_readTimer.async_wait(std::bind(&Connection::onTimeout, asConnection(), std::placeholders::_1));
+        socksHandshake();
         return;
+    }
+    finishConnect();
+}
 
-    if(!error) {
-        m_connected = true;
-
-        // disable nagle's algorithm, this make the game play smoother
-        boost::asio::ip::tcp::no_delay option(true);
-        m_socket.set_option(option);
-        boost::system::error_code ecc;
-        m_socket.set_option(boost::asio::socket_base::send_buffer_size(524288), ecc);
-        m_socket.set_option(boost::asio::socket_base::receive_buffer_size(524288), ecc);
-
-        if(m_connectCallback)
-            m_connectCallback();
-    } else
-        handleError(error);
-
+void Connection::finishConnect()
+{
+    m_readTimer.cancel();
+    m_activityTimer.restart();
+    m_connected = true;
     m_connecting = false;
+    boost::system::error_code ec;
+    m_socket.set_option(boost::asio::ip::tcp::no_delay(true), ec);
+    m_socket.set_option(boost::asio::socket_base::send_buffer_size(g_app.isHeadless() ? 32768 : 524288), ec);
+    m_socket.set_option(boost::asio::socket_base::receive_buffer_size(g_app.isHeadless() ? 32768 : 524288), ec);
+    if(m_connectCallback) m_connectCallback();
+}
+
+void Connection::socksHandshake()
+{
+    using Bytes = std::vector<uint8>;
+    using Next = std::function<void(const Bytes&)>;
+    auto self = asConnection();
+    auto fail = [self](const boost::system::error_code& ec) {
+        if(self->m_connecting) self->handleError(ec);
+    };
+    auto read = [self, fail](size_t size, Next next) {
+        auto data = std::make_shared<Bytes>(size);
+        asio::async_read(self->m_socket, asio::buffer(*data), [self, fail, data, next](const boost::system::error_code& ec, size_t) {
+            if(!self->m_connecting) return;
+            if(ec) { fail(ec); return; }
+            next(*data);
+        });
+    };
+    auto exchange = [self, fail, read](Bytes request, size_t size, Next next) {
+        auto data = std::make_shared<Bytes>(std::move(request));
+        asio::async_write(self->m_socket, asio::buffer(*data), [self, fail, read, data, size, next](const boost::system::error_code& ec, size_t) {
+            if(!self->m_connecting) return;
+            if(ec) { fail(ec); return; }
+            read(size, next);
+        });
+    };
+    auto rejected = [fail]() { fail(asio::error::access_denied); };
+    auto request = [self, read, exchange, rejected]() {
+        Bytes msg{5,1,0,3,static_cast<uint8>(self->m_destinationHost.size())};
+        msg.insert(msg.end(),self->m_destinationHost.begin(),self->m_destinationHost.end());
+        msg.push_back(static_cast<uint8>(self->m_destinationPort >> 8));
+        msg.push_back(static_cast<uint8>(self->m_destinationPort & 255));
+        exchange(std::move(msg),4,[self,read,rejected](const Bytes& reply) {
+            if(reply[0]!=5 || reply[1]!=0 || reply[2]!=0) { rejected(); return; }
+            auto done = [self](const Bytes&) { self->finishConnect(); };
+            if(reply[3]==1) read(6,done);
+            else if(reply[3]==4) read(18,done);
+            else if(reply[3]==3) read(1,[read,done](const Bytes& length) { read(static_cast<size_t>(length[0])+2,done); });
+            else rejected();
+        });
+    };
+    bool auth = !m_socksUser.empty();
+    exchange(Bytes{5,1,static_cast<uint8>(auth ? 2 : 0)},2,[self,exchange,request,rejected,auth](const Bytes& reply) {
+        if(reply[0]!=5 || reply[1]!=(auth?2:0)) { rejected(); return; }
+        if(!auth) { request(); return; }
+        Bytes msg{1,static_cast<uint8>(self->m_socksUser.size())};
+        msg.insert(msg.end(),self->m_socksUser.begin(),self->m_socksUser.end());
+        msg.push_back(static_cast<uint8>(self->m_socksPassword.size()));
+        msg.insert(msg.end(),self->m_socksPassword.begin(),self->m_socksPassword.end());
+        self->m_socksPassword.clear();
+        exchange(std::move(msg),2,[request,rejected](const Bytes& result) {
+            if(result[0]!=1 || result[1]!=0) { rejected(); return; }
+            request();
+        });
+    });
 }
 
 void Connection::onCanWrite(const boost::system::error_code& error)

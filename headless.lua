@@ -8,7 +8,8 @@ dofile("/modules/corelib/util.lua")
 dofile("/modules/gamelib/const.lua")
 dofile("/modules/gamelib/game.lua")
 
-local configPath = "/headless-local.lua"
+local profile = os.getenv("OTC_HEADLESS_PROFILE") or ""
+local configPath = profile ~= "" and ("/profiles/" .. profile .. ".lua") or "/headless-local.lua"
 local config = nil
 local scheduled = nil
 local lastAttempt = 0
@@ -53,7 +54,7 @@ local function stopRoute(message)
 end
 
 local function tick()
-  if not running or finished or not g_game.isOnline() then return end
+  if not running or not g_game.isOnline() then return end
   local player = g_game.getLocalPlayer()
   if not player or player:isDead() then schedule(tick, 250); return end
   local pos = player:getPosition()
@@ -65,8 +66,8 @@ local function tick()
     lastLoggedPosition = key
   end
 
-  if not config.enableRoute then
-    schedule(tick, 500)
+  if finished or not config.enableRoute then
+    schedule(tick, 1000)
     return
   end
   local target = config.target
@@ -78,10 +79,18 @@ local function tick()
     current = target
   else
     local wp = config.approach or {}
+    if index == 1 then
+      local nearest, best = nil, math.huge
+      for i, p in ipairs(wp) do
+        if p.z == pos.z and distance(pos,p) < best then nearest, best = i, distance(pos,p) end
+      end
+      if nearest then index = nearest end
+    end
     while wp[index] and equals(pos, wp[index]) do index = index + 1 end
     current = wp[index]
     if not current or current.z ~= pos.z then
       stopRoute("No confirmed approach waypoint on current floor; stopping route.")
+      schedule(tick, 1000)
       return
     end
   end
@@ -96,6 +105,7 @@ local function tick()
             g_game.use(thing)
             -- Sending USE is not proof of a successful server action.
             stopRoute("USE requested on configured item; server confirmation not implemented.")
+            schedule(tick, 1000)
             return
           end
         end
@@ -103,6 +113,7 @@ local function tick()
     end
   elseif equals(pos, target) and not cart then
     stopRoute("Destination reached.")
+    schedule(tick, 1000)
     return
   elseif not equals(pos, current) and not player:isAutoWalking() and not player:isWalking() and now-lastAttempt >= 500 then
     lastAttempt = now
@@ -125,6 +136,7 @@ local function onEnd()
   running = false
   if scheduled then scheduled:cancel(); scheduled = nil end
   log("Disconnected.")
+  g_dispatcher.scheduleEvent("exit disconnected", function() g_app.exit() end, 100)
 end
 
 local function begin()
@@ -156,12 +168,15 @@ local function begin()
   connect(g_game, {
     onGameStart = onStart,
     onGameEnd = onEnd,
-    onLoginError = function(message) log("Login rejected: " .. tostring(message)) end,
-    onConnectionError = function(message) log("Connection error: " .. tostring(message)) end,
+    onLoginError = function(message) log("Login rejected: " .. tostring(message)); g_dispatcher.scheduleEvent("exit rejected login", function() g_app.exit() end, 100) end,
+    onConnectionError = function(message) log("Connection error: " .. tostring(message)); g_dispatcher.scheduleEvent("exit failed connection", function() g_app.exit() end, 100) end,
     onTextMessage = function(mode, message) log("Server: " .. tostring(message)) end
   })
   -- Direct world endpoint, not a login/character-list endpoint.
   log("Connecting to configured world endpoint " .. config.host .. ":" .. config.port)
+  g_dispatcher.scheduleEvent("login deadline", function()
+    if not g_game.isOnline() then log("Login timeout"); g_game.cancelLogin(); g_app.exit() end
+  end, 45000)
   g_game.loginWorld(config.account, config.password, config.world or "OTServer",
     config.host, config.port, config.character, "", "", "")
   config.password = nil

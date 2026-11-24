@@ -21,6 +21,7 @@
  */
 
 #include "texturemanager.h"
+#include <framework/core/application.h>
 #include "animatedtexture.h"
 #include "graphics.h"
 #include "image.h"
@@ -65,6 +66,7 @@ void TextureManager::reload()
 
 TexturePtr TextureManager::getTexture(const std::string& fileName)
 {
+    if (g_app.isHeadless()) return nullptr;
     auto it = m_textures.find(fileName);
     if (it != m_textures.end()) {
         return it->second;

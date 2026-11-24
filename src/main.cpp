@@ -20,6 +20,7 @@
  * THE SOFTWARE.
  */
 
+#include <cstdlib>
 #include <framework/core/application.h>
 #include <framework/core/resourcemanager.h>
 #include <framework/core/eventdispatcher.h>
@@ -48,7 +49,13 @@ int main(int argc, const char* argv[]) {
     // initialize resources
     g_resources.init(argv[0]);
     std::string compactName = g_resources.getCompactName();
-    g_logger.setLogFile("otclient-headless.log");
+    const char* profileEnv = std::getenv("OTC_HEADLESS_PROFILE");
+    const std::string profile = profileEnv ? profileEnv : "";
+    if (!profile.empty() && (profile.size() != 32 || profile.find_first_not_of("0123456789abcdef") != std::string::npos))
+        return 2;
+    if (!profile.empty())
+        compactName += "-" + profile;
+    g_logger.setLogFile(profile.empty() ? "otclient-headless.log" : "profiles/" + profile + ".log");
 
     // setup application name and version
     g_app.setName(headless ? "OTClientV8Headless" : "OTClientV8");

@@ -69,6 +69,10 @@ public:
 protected:
     void internal_connect(asio::ip::basic_resolver<asio::ip::tcp>::iterator endpointIterator);
     void internal_write();
+    void socksHandshake();
+    void finishConnect();
+    std::string m_socksHost, m_socksUser, m_socksPassword, m_destinationHost;
+    uint16 m_destinationPort = 0;
     void onResolve(const boost::system::error_code& error, asio::ip::tcp::resolver::iterator endpointIterator);
     void onConnect(const boost::system::error_code& error);
     void onCanWrite(const boost::system::error_code& error);
