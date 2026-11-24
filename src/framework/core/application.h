@@ -47,6 +47,9 @@ public:
     void setCompactName(const std::string& compactName) { m_appCompactName = compactName; }
     void setVersion(const std::string& version) { m_appVersion = version; }
 
+    void setHeadless(bool enabled) { m_headless = enabled; }
+    bool isHeadless() { return m_headless; }
+
     bool isRunning() { return m_running; }
     bool isStopping() { return m_stopping; }
     bool isTerminated() { return m_terminated; }
@@ -86,6 +89,7 @@ protected:
     stdext::boolean<false> m_stopping;
     stdext::boolean<false> m_terminated;
     stdext::boolean<false> m_mobile;
+    bool m_headless = false;
 };
 
 #ifdef FW_GRAPHICS
