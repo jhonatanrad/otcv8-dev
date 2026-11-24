@@ -22,6 +22,7 @@
 
 #include "atlas.h"
 #include "fontmanager.h"
+#include <framework/core/application.h>
 #include "texture.h"
 
 #include <framework/core/eventdispatcher.h>
@@ -95,6 +96,8 @@ bool FontManager::fontExists(const std::string& fontName)
 
 BitmapFontPtr FontManager::getFont(const std::string& fontName)
 {
+    if (g_app.isHeadless())
+        return nullptr;
     // find font by name
     for(const BitmapFontPtr& font : m_fonts) {
         if(font->getName() == fontName)
