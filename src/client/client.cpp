@@ -42,7 +42,8 @@ void Client::init(std::vector<std::string>& args)
     g_map.init();
     g_minimap.init();
     g_game.init();
-    g_shaders.init();
+    if (!g_app.isHeadless())
+        g_shaders.init();
     g_things.init();
     g_healthBars.init();
 }
