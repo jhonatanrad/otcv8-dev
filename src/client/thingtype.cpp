@@ -21,6 +21,7 @@
  */
 
 #include "thingtype.h"
+#include <framework/core/application.h>
 #include "spritemanager.h"
 #include "game.h"
 #include "lightview.h"
@@ -285,6 +286,8 @@ void ThingType::unserialize(uint16 clientId, ThingCategory category, const FileS
 
     bool hasFrameGroups = (category == ThingCategoryCreature && g_game.getFeature(Otc::GameIdleAnimations));
     uint8 groupCount = hasFrameGroups ? fin->getU8() : 1;
+    if (g_app.isHeadless() && (groupCount == 0 || groupCount > 3))
+        stdext::throw_exception("invalid DAT frame group count");
 
     m_animationPhases = 0;
     int totalSpritesCount = 0;
@@ -333,7 +336,10 @@ void ThingType::unserialize(uint16 clientId, ThingCategory category, const FileS
             }
         }
 
-        int totalSprites = m_size.area() * m_layers * m_numPatternX * m_numPatternY * m_numPatternZ * groupAnimationsPhases;
+        const int64_t spriteCount = static_cast<int64_t>(width) * height * m_layers * m_numPatternX * m_numPatternY * m_numPatternZ * groupAnimationsPhases;
+        if (spriteCount <= 0 || spriteCount > 4096)
+            stdext::throw_exception(stdext::format("invalid sprite count for thing %d, category %d, offset %d", clientId, category, fin->tell()));
+        int totalSprites = static_cast<int>(spriteCount);
         total_sprites.push_back(totalSprites);
 
         if((totalSpritesCount+totalSprites) > 4096)
@@ -346,7 +352,7 @@ void ThingType::unserialize(uint16 clientId, ThingCategory category, const FileS
         totalSpritesCount += totalSprites;
     }
 
-    if(sizes.size() > 1) {
+    if (!g_app.isHeadless() && sizes.size() > 1) {
         // correction for some sprites
         for (auto& s : sizes) {
             m_size.setWidth(std::max<int>(m_size.width(), s.width()));

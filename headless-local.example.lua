@@ -2,6 +2,7 @@
 -- Use only on a server that permits automation. Specify the actual world endpoint.
 return {
   host = "",
+  loginPort = 7171,
   port = 7172,
   world = "OTServer",
   account = "",

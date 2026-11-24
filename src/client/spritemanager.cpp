@@ -35,6 +35,7 @@ SpriteManager::SpriteManager()
 {
     m_spritesCount = 0;
     m_signature = 0;
+    m_spriteSize = 32;
 }
 
 void SpriteManager::terminate()

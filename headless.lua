@@ -7,6 +7,15 @@ dofile("/modules/corelib/table.lua")
 dofile("/modules/corelib/util.lua")
 dofile("/modules/gamelib/const.lua")
 dofile("/modules/gamelib/game.lua")
+dofile("/modules/corelib/net.lua")
+dofile("/modules/gamelib/protocol.lua")
+dofile("/modules/gamelib/protocollogin.lua")
+if not iptostring then
+  function iptostring(ip)
+    return string.format("%d.%d.%d.%d", ip % 256, math.floor(ip/256)%256, math.floor(ip/65536)%256, math.floor(ip/16777216)%256)
+  end
+end
+local loginProtocol
 
 local profile = os.getenv("OTC_HEADLESS_PROFILE") or ""
 local configPath = profile ~= "" and ("/profiles/" .. profile .. ".lua") or "/headless-local.lua"
@@ -32,6 +41,7 @@ local function loadAssets()
   if config.frameGroups then g_game.enableFeature(GameIdleAnimations) end
   if config.frameDurations then g_game.enableFeature(GameEnhancedAnimations) end
   assert(g_resources.fileExists(config.dat or "/data/things/860/Tibia.dat"), "Tibia.dat not found in data/things/860")
+  log("DAT format: extended=" .. tostring(config.extended) .. " frameGroups=" .. tostring(config.frameGroups) .. " frameDurations=" .. tostring(config.frameDurations))
   assert(g_things.loadDat(config.dat or "/data/things/860/Tibia.dat"),
     "Unable to load DAT; check file and format flags")
   log("DAT loaded successfully")
@@ -173,13 +183,63 @@ local function begin()
     onTextMessage = function(mode, message) log("Server: " .. tostring(message)) end
   })
   -- Direct world endpoint, not a login/character-list endpoint.
-  log("Connecting to configured world endpoint " .. config.host .. ":" .. config.port)
+  log("Configured login port " .. tostring(config.loginPort or 7171) .. "; world port " .. config.port)
   g_dispatcher.scheduleEvent("login deadline", function()
-    if not g_game.isOnline() then log("Login timeout"); g_game.cancelLogin(); g_app.exit() end
+    if not g_game.isOnline() then log("Login timeout"); if loginProtocol then loginProtocol:disconnect() end; g_game.cancelLogin(); g_app.exit() end
   end, 45000)
-  g_game.loginWorld(config.account, config.password, config.world or "OTServer",
-    config.host, config.port, config.character, "", "", "")
-  config.password = nil
+  local function enterWorld(host, port, world)
+    log("Connecting to world endpoint " .. host .. ":" .. port)
+    g_game.loginWorld(config.account, config.password, world, host, port, config.character, "", "", "")
+    config.password = nil
+  end
+  if config.loginPort then
+    assert(type(config.loginPort) == "number" and config.loginPort >= 1 and config.loginPort <= 65535, "Invalid login port")
+    local function readSignature(path)
+      local f = io.open(path, "rb")
+      if not f then return nil end
+      local raw = f:read(4)
+      f:close()
+      if not raw or #raw ~= 4 then return nil end
+      local a,b,c,d=raw:byte(1,4)
+      return a+b*256+c*65536+d*16777216
+    end
+    local spr = readSignature("data/things/860/Tibia.spr.header")
+    local pic = readSignature("data/things/860/Tibia.pic.header")
+    assert(spr and pic, "Import DAT with matching Tibia.spr and Tibia.pic alongside it (only their headers are copied)")
+    G.headlessSprSignature = spr
+    PIC_SIGNATURE = pic
+    loginProtocol = ProtocolLogin.create()
+    loginProtocol.onLoginError = function(_, message)
+      log("Login rejected: " .. tostring(message))
+      config.password = nil
+      g_dispatcher.scheduleEvent("exit rejected login", function() g_app.exit() end, 100)
+    end
+    loginProtocol.onCharacterList = function(_, characters)
+      for _, char in ipairs(characters) do
+        if char.name == config.character then
+          local host = char.worldIp
+          local port = config.port
+          if type(host) ~= "string" or host == "" or host == "0.0.0.0" then
+            log("Invalid world endpoint returned by login server")
+            g_app.exit()
+            return
+          end
+          log("Character authenticated; advertised world port " .. tostring(char.worldPort))
+          g_dispatcher.scheduleEvent("enter authenticated world", function()
+            enterWorld(host, port, char.worldName or "OTServer")
+          end, 100)
+          return
+        end
+      end
+      log("Login rejected: configured character not present in account list")
+      config.password = nil
+      g_app.exit()
+    end
+    log("Authenticating at " .. config.host .. ":" .. config.loginPort)
+    loginProtocol:login(config.host, config.loginPort, config.account, config.password, "", false)
+  else
+    enterWorld(config.host, config.port, config.world or "OTServer")
+  end
 end
 
 function g_app.onRun()

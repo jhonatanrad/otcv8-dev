@@ -21,6 +21,7 @@
  */
 
 #include "thingtypemanager.h"
+#include <framework/core/application.h>
 #include "spritemanager.h"
 #include "thing.h"
 #include "thingtype.h"
@@ -172,6 +173,8 @@ bool ThingTypeManager::loadDat(std::string file)
     m_datLoaded = false;
     m_datSignature = 0;
     m_contentRevision = 0;
+    int currentCategory = -1, currentId = -1;
+    uint offset = 0;
     try {
         file = g_resources.guessFilePath(file, "dat");
 
@@ -193,6 +196,7 @@ bool ThingTypeManager::loadDat(std::string file)
                 firstId = 100;
             for(uint16 id = firstId; id < m_thingTypes[category].size(); ++id) {
                 ThingTypePtr type(new ThingType);
+                currentCategory = category; currentId = id; offset = fin->tell();
                 type->unserialize(id, (ThingCategory)category, fin);
                 m_thingTypes[category][id] = type;
                 if (type->isMarketable()) {
@@ -205,8 +209,9 @@ bool ThingTypeManager::loadDat(std::string file)
         m_datLoaded = true;
         g_lua.callGlobalField("g_things", "onLoadDat", file);
         return true;
-    } catch(stdext::exception& e) {
-        g_logger.error(stdext::format("Failed to read dat '%s': %s'", file, e.what()));
+    } catch(const std::exception& e) {
+        m_datLoaded = false;
+        g_logger.warning(stdext::format("Failed to read dat '%s' category=%d id=%d recordOffset=%d: %s", file, currentCategory, currentId, offset, e.what()));
         return false;
     }
 }

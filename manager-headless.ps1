@@ -47,6 +47,9 @@ function Write-Profile($p) {
     $port = [int]$p.port
     if ($port -lt 1 -or $port -gt 65535) { throw 'Porta invalida' }
     $lines += "  port = $port,"
+    $loginPort = if ($p.loginPort) {[int]$p.loginPort} else {7171}
+    if ($loginPort -lt 1 -or $loginPort -gt 65535) { throw "Porta de login invalida" }
+    $lines += "  loginPort = $loginPort,"
     $lines += '  dat = "/data/things/860/Tibia.dat",'
     foreach ($k in @('extended','frameGroups','frameDurations','enableRoute')) {
         $lines += "  $k = $(([bool]$p.$k).ToString().ToLowerInvariant()),"
@@ -168,8 +171,8 @@ $form.Controls.Add($grid)
 $fields=@{}
 $spec=@(
     @('character','Personagem',12,270,250),@('account','Conta',285,270,250),@('password','Senha',558,270,250),
-    @('host','Servidor de jogo',12,325,250),@('port','Porta',285,325,100),@('proxyHost','SOCKS5 host (opcional)',405,325,250),@('proxyPort','Porta SOCKS5',675,325,120),
-    @('proxyUser','Usuario SOCKS5',12,380,250),@('proxyPassword','Senha SOCKS5',285,380,250),
+    @('host','Servidor de login',12,325,250),@('port','Porta jogo',285,325,100),@('proxyHost','SOCKS5 host (opcional)',405,325,250),@('proxyPort','Porta SOCKS5',675,325,120),
+    @('proxyUser','Usuario SOCKS5',12,380,250),@('proxyPassword','Senha SOCKS5',285,380,250),@('loginPort','Porta login',558,380,100),
     @('target','Destino x y z',12,435,250),@('cart','Objeto x y z (opcional)',285,435,250),@('cartId','ID objeto',558,435,100),
     @('approach','Waypoints de aproximacao (um por linha)',12,490,650)
 )
@@ -184,7 +187,7 @@ foreach($item in $spec) {
     if($item[0] -in @('password','proxyPassword')) {$field.UseSystemPasswordChar=$true}
     $fields[$item[0]]=$field;$form.Controls.Add($field)
 }
-$fields.port.Text='7172';$fields.target.Text='160 48 8'
+$fields.port.Text='7172';$fields.loginPort.Text='7171';$fields.target.Text='160 48 8'
 $flags=@{};$i=0
 foreach($k in @('extended','frameGroups','frameDurations','enableRoute')) {
     $check=New-Object Windows.Forms.CheckBox
@@ -221,7 +224,16 @@ Add-Button 'Importar DAT' 12 {
             $dir=Join-Path $root 'data\things\860';New-Item -ItemType Directory -Force $dir|Out-Null
             $dest=Join-Path $dir 'Tibia.dat'
             if([IO.Path]::GetFullPath($d.FileName) -ne [IO.Path]::GetFullPath($dest)){Copy-Item -LiteralPath $d.FileName -Destination $dest -Force}
-            $status.Text='DAT importado.'
+            $sourceDir=Split-Path -Parent $d.FileName
+            foreach($name in @('Tibia.spr','Tibia.pic')) {
+                $source=Join-Path $sourceDir $name
+                $header=Join-Path $dir ($name+'.header')
+                if(Test-Path -LiteralPath $source -PathType Leaf){
+                    $stream=[IO.File]::OpenRead($source)
+                    try { $bytes=New-Object byte[] 4; if($stream.Read($bytes,0,4) -ne 4){throw "$name invalido"};[IO.File]::WriteAllBytes($header,$bytes) }finally{$stream.Dispose()}
+                } else { Remove-Item -LiteralPath $header -ErrorAction SilentlyContinue }
+            }
+            $status.Text='DAT importado. Cabecalhos SPR/PIC copiados se presentes na mesma pasta.'
         };$d.Dispose()
     }catch{$status.Text=$_.Exception.Message}
 }
@@ -229,7 +241,7 @@ Add-Button 'Adicionar perfil' 170 {
     try {
         foreach($k in @('character','account','password','host')){if([string]::IsNullOrWhiteSpace($fields[$k].Text)){throw "Preencha $k"}}
         $p=[ordered]@{id=[guid]::NewGuid().ToString('N');secret=(Protect-Secret $fields.password.Text);proxySecret=(Protect-Secret $fields.proxyPassword.Text)}
-        foreach($k in @('character','account','host','port','proxyHost','proxyPort','proxyUser','target','cart','cartId','approach')){$p[$k]=$fields[$k].Text.Trim()}
+        foreach($k in @('character','account','host','port','loginPort','proxyHost','proxyPort','proxyUser','target','cart','cartId','approach')){$p[$k]=$fields[$k].Text.Trim()}
         foreach($k in $flags.Keys){$p[$k]=$flags[$k].Checked}
         if(@($script:profiles|Where-Object {$_.character -eq $p.character -and $_.host -eq $p.host}).Count){throw 'Personagem ja cadastrado neste servidor.'}
         Write-Profile $p;$script:profiles+=([pscustomobject]$p);Save-Profiles
